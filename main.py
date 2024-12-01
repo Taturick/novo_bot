@@ -11,7 +11,7 @@ secret_key = os.getenv("SECRET_BINANCE")
 cliente_binance = Client(api_key, secret_key)
 
 # Variável global para controlar a thread
-operacao_ativa = False
+operacao_ativa = True  # A operação vai ser iniciada automaticamente
 
 # Função para calcular médias móveis
 def calcular_media(dados, periodo):
@@ -43,11 +43,19 @@ def calcular_quantidade(symbol, percentual_capital):
             break
 
     if saldo_disponivel <= 0:
-        raise Exception("Saldo insuficiente para operar.")
-    
+        return 0  # Retorna 0 se não houver saldo suficiente
+
     valor_a_usar = saldo_disponivel * percentual_capital
     preco_atual = float(cliente_binance.futures_mark_price(symbol=symbol)['markPrice'])
+
+    if preco_atual <= 0:
+        raise ValueError("O preço atual do ativo é inválido (menor ou igual a zero).")
+
     quantidade = valor_a_usar / preco_atual
+
+    if quantidade <= 0:
+        return 0  # Retorna 0 se a quantidade for inválida
+
     return ajustar_quantidade(symbol, quantidade)
 
 # Função para operação de cruzamento de médias móveis
@@ -58,22 +66,42 @@ def operar_futuros_cruzamento(symbol="NEIROUSDT", leverage=2, percentual_capital
 
     while operacao_ativa:
         try:
+            # Obtendo as velas e calculando as médias móveis
             velas = cliente_binance.futures_klines(symbol=symbol, interval="1m", limit=50)
             fechamentos = [float(vela[4]) for vela in velas]
             media_rapida = calcular_media(fechamentos, 9)
             media_devagar = calcular_media(fechamentos, 25)
+            preco_atual = fechamentos[-1]
 
+            # Exibindo os logs das médias móveis e do preço atual
+            print(f"Preço Atual: {preco_atual}")
+            print(f"Média Rápida (9): {media_rapida}")
+            print(f"Média Devagar (25): {media_devagar}")
+
+            # Calculando a quantidade a ser comprada/vendida
             quantidade = calcular_quantidade(symbol, percentual_capital)
 
+            if quantidade == 0:
+                # Se não houver saldo suficiente, aguarda e continua verificando
+                print("Saldo insuficiente, aguardando para tentar novamente...")
+                time.sleep(60)  # Aguardar antes de tentar novamente
+                continue  # Retorna ao início do loop
+
+            # Log das operações
             if media_rapida > media_devagar and posicao_atual != "long":
                 if posicao_atual == "short":
                     cliente_binance.futures_create_order(symbol=symbol, side="BUY", type="MARKET", quantity=quantidade)
+                    print(f"Fechando posição SHORT e comprando LONG: {quantidade} {symbol}")
                 cliente_binance.futures_create_order(symbol=symbol, side="BUY", type="MARKET", quantity=quantidade)
+                print(f"Comprando LONG: {quantidade} {symbol}")
                 posicao_atual = "long"
+
             elif media_rapida < media_devagar and posicao_atual != "short":
                 if posicao_atual == "long":
                     cliente_binance.futures_create_order(symbol=symbol, side="SELL", type="MARKET", quantity=quantidade)
+                    print(f"Fechando posição LONG e vendendo SHORT: {quantidade} {symbol}")
                 cliente_binance.futures_create_order(symbol=symbol, side="SELL", type="MARKET", quantity=quantidade)
+                print(f"Vendendo SHORT: {quantidade} {symbol}")
                 posicao_atual = "short"
 
         except Exception as e:
@@ -81,14 +109,12 @@ def operar_futuros_cruzamento(symbol="NEIROUSDT", leverage=2, percentual_capital
 
         time.sleep(60)
 
-# Função para iniciar a operação em uma nova thread
-def iniciar_operacao():
-    global operacao_ativa
-    if not operacao_ativa:
-        operacao_ativa = True
-        threading.Thread(target=operar_futuros_cruzamento).start()
+# Função principal
+def main():
+    print("Iniciando o script...")
 
-# Função para parar a operação
-def parar_operacao():
-    global operacao_ativa
-    operacao_ativa = False
+    # Iniciar a operação em uma nova thread sem depender de comandos do Telegram
+    threading.Thread(target=operar_futuros_cruzamento).start()
+
+if __name__ == "__main__":
+    main()
