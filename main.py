@@ -10,6 +10,9 @@ api_key = os.getenv("KEY_BINANCE")
 secret_key = os.getenv("SECRET_BINANCE")
 cliente_binance = Client(api_key, secret_key)
 
+# Variável global para controlar a thread
+operacao_ativa = False
+
 # Função para calcular médias móveis
 def calcular_media(dados, periodo):
     if len(dados) < periodo:
@@ -49,10 +52,11 @@ def calcular_quantidade(symbol, percentual_capital):
 
 # Função para operação de cruzamento de médias móveis
 def operar_futuros_cruzamento(symbol="NEIROUSDT", leverage=2, percentual_capital=0.5):
+    global operacao_ativa
     cliente_binance.futures_change_leverage(symbol=symbol, leverage=leverage)
     posicao_atual = None
-    
-    while True:
+
+    while operacao_ativa:
         try:
             velas = cliente_binance.futures_klines(symbol=symbol, interval="1m", limit=50)
             fechamentos = [float(vela[4]) for vela in velas]
@@ -76,3 +80,15 @@ def operar_futuros_cruzamento(symbol="NEIROUSDT", leverage=2, percentual_capital
             print(f"Erro: {e}")
 
         time.sleep(60)
+
+# Função para iniciar a operação em uma nova thread
+def iniciar_operacao():
+    global operacao_ativa
+    if not operacao_ativa:
+        operacao_ativa = True
+        threading.Thread(target=operar_futuros_cruzamento).start()
+
+# Função para parar a operação
+def parar_operacao():
+    global operacao_ativa
+    operacao_ativa = False
